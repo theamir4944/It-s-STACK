@@ -20,7 +20,7 @@
 
 typedef double type;
 const type POIZON = NAN;
-const type CANARY_VAL = 0xBEE;
+const type CANARY_VAL = 0xBEEBEE;
 const size_t MIN_POP_CAP = 2;
 
 #define CANARIES
