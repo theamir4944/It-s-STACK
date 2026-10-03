@@ -24,7 +24,8 @@ const type CANARY_VAL = 0xB333DEDDEDAEBALL;
 const size_t MIN_POP_CAP = 2;
 
 #define CANARIES
-#define HASHES
+#define STRUCT_HASHES
+#define DATA_HASHES
 #define VERIFIES
 
 #define SPECIFICATOR "%5lg"
@@ -69,9 +70,12 @@ struct stack_t {
     type* canary_first;
     type* canary_last;
 #endif // CANARIES
-#ifdef HASHES
-    uint64_t hash;
-#endif // HASHES
+#ifdef DATA_HASHES
+    uint64_t data_hash;
+#endif // DATA_HASHES
+#ifdef STRUCT_HASHES
+    uint64_t struct_hash;
+#endif // STRUCT_HASHES
 };
 
 
@@ -82,7 +86,8 @@ stack_error stack_push(stack_t* stack, type new_value);
 stack_error stack_cut(stack_t* stack);
 stack_error stack_pop(stack_t* stack, type* output_value);
 stack_error stack_destructor(stack_t* stack);
-uint64_t hash_djb2(stack_t* stack);
+uint64_t hash_djb2_data(stack_t* stack);
+uint64_t hash_djb2_stack(stack_t* stack);
 void stack_dump(stack_t* stack);
 bool stack_verify(stack_t* stack);
 void stack_print(stack_t* stack);
@@ -95,13 +100,20 @@ void struct_null(stack_t* stack) {
     stack->data = NULL;
     stack->size = 0;
     stack->capacity = 0;
+
 #ifdef CANARIES
     stack->canary_first = NULL;
     stack->canary_last = NULL;
 #endif // CANARIES
-#ifdef HASHES
-    stack->hash = hash_djb2(stack);
-#endif // HASHES
+
+#ifdef DATA_HASHES
+    stack->data_hash = hash_djb2_data(stack);
+#endif // DATA_HASHES
+
+#ifdef STRUCT_HASHES
+    stack->struct_hash = hash_djb2_stack(stack);
+#endif // STRUCT_HASHES
+
 #ifdef STACK_DEBUG
     stack->debug_data.file_name = NULL;
     stack->debug_data.stack_name = NULL;
@@ -140,18 +152,25 @@ stack_error stack_constructor(stack_t* stack, ssize_t capacity ON_DBG(, char* st
         stack->data = stack->real_buffer + 1;
         stack->capacity = capacity;
         stack->size = 0;
+
 #ifdef CANARIES
         stack->canary_first = stack->real_buffer;
         *(stack->canary_first) = CANARY_VAL;
         stack->canary_last = stack->real_buffer + stack->capacity + 1;
         *(stack->canary_last) = CANARY_VAL;
 #endif // CANARIES
+
         for (ssize_t index = stack->size; index < capacity; index++) {
             (stack->data)[index] = POIZON;
         }
-#ifdef HASHES
-        stack->hash = hash_djb2(stack);
-#endif // HASHES
+
+#ifdef DATA_HASHES
+        stack->data_hash = hash_djb2_data(stack);
+#endif // DATA_HASHES
+
+#ifdef STRUCT_HASHES
+        stack->struct_hash = hash_djb2_stack(stack);
+#endif // STRUCT_HASHES
 
         log_ok("Stack %p created ; full stack-buffer: %p \n" MAIN_STACK_INFO, stack, stack->real_buffer, MAIN_STACK_ARGS);
         return STACK_OK;
@@ -177,12 +196,14 @@ stack_error stack_raise(stack_t* stack) {
         for (ssize_t index = stack->size; index < stack->capacity; index++) {
             (stack->data)[index] = POIZON;
         }
+
 #ifdef CANARIES
         stack->canary_first = stack->real_buffer;
         *(stack->canary_first) = CANARY_VAL;
         stack->canary_last = stack->real_buffer + stack->capacity + 1;
         *(stack->canary_last) = CANARY_VAL;
 #endif // CANARIES
+
         log_ok("Stack %p raised correctly ; stack-data: %p ; new capacity: %zd \n" MAIN_STACK_INFO, stack, stack->data, stack->capacity, MAIN_STACK_ARGS);
 
         return STACK_OK;
@@ -222,7 +243,8 @@ stack_error stack_push(stack_t* stack, type new_value) {
     (stack->size)++;
 
     log_ok("Stack %p pushing done ; stack-data: %p ; size: %zd ; capacity: %zd \n" MAIN_STACK_INFO, stack, stack->data, stack->size, stack->capacity, MAIN_STACK_ARGS);
-    stack->hash = hash_djb2(stack);
+    stack->data_hash = hash_djb2_data(stack);
+    stack->struct_hash = hash_djb2_stack(stack);
     return STACK_OK;
 
 }
@@ -241,12 +263,14 @@ stack_error stack_cut(stack_t* stack) {
         stack->real_buffer = new_real_buffer;
         stack->data = new_real_buffer + 1;
         new_real_buffer = NULL;
+
 #ifdef CANARIES
         stack->canary_first = stack->real_buffer;
         *(stack->canary_first) = CANARY_VAL;
         stack->canary_last = stack->real_buffer + stack->capacity + 1;
         *(stack->canary_last) = CANARY_VAL;
 #endif // CANARIES
+
         log_ok("Stack %p cut correctly ; stack-data: %p ; new capacity: %zd \n" MAIN_STACK_INFO, stack, stack->data, stack->capacity, MAIN_STACK_ARGS);
         return STACK_OK;
     }
@@ -278,7 +302,8 @@ stack_error stack_pop(stack_t* stack, type* output_value) {
     }
 
     log_ok("Stack %p popping done ; stack-data: %p ; size: %zd ; capacity: %zd \n" MAIN_STACK_INFO, stack, stack->data, stack->size, stack->capacity, MAIN_STACK_ARGS);
-    stack->hash = hash_djb2(stack);
+    stack->data_hash = hash_djb2_data(stack);
+    stack->struct_hash = hash_djb2_stack(stack);
     return is_error;
 
 }
@@ -307,16 +332,30 @@ stack_error stack_destructor(stack_t* stack) {
 }
 
 
-uint64_t hash_djb2(stack_t* stack) {
+uint64_t hash_djb2_data(stack_t* stack) {
 
-    char* stack_copy = (char*) stack;
-    uint64_t hash = 0;
+    char* data_copy = (char*) (stack->data);
+    uint64_t data_hash = 0;
 
-    for (size_t index = 0; index < sizeof(stack_t) - sizeof(uint64_t); index++) {
-        hash = ((hash << 5) + hash) + (int)(stack_copy[index]);
+    for (size_t index = 0; index < stack->size * sizeof(type); index++) {
+        data_hash = ((data_hash << 5) + data_hash) + (uint64_t)(data_copy[index]);
     }
 
-    return hash;
+    return data_hash;
+
+}
+
+
+uint64_t hash_djb2_stack(stack_t* stack) {
+
+    char* stack_copy = (char*) stack;
+    uint64_t struct_hash = 0;
+
+    for (size_t index = 0; index < sizeof(stack_t) - sizeof(uint64_t); index++) {
+        struct_hash = ((struct_hash << 5) + struct_hash) + (uint64_t)(stack_copy[index]);
+    }
+
+    return struct_hash;
 
 }
 
@@ -342,9 +381,11 @@ void stack_dump(stack_t* stack) {
         }
 
     }
+    
 #ifdef CANARIES
     log("\n\n \t  Canary-first = " SPECIFICATOR " ; Canary-end = " SPECIFICATOR, *(stack->canary_first), *(stack->canary_last));
 #endif // CANARIES
+
     log("\n\n" MAIN_STACK_INFO, MAIN_STACK_ARGS);
     return;
 
@@ -389,6 +430,7 @@ bool stack_verify(stack_t* stack) {
         log_error("Capacity = %zd < Size = %zd \n" MAIN_STACK_INFO, stack->capacity, stack->size, MAIN_STACK_ARGS);
         return false;
     }
+
 #ifdef CANARIES
     if (stack->canary_first == NULL || stack->canary_last == NULL) {
         log_error("Canary-first = %p ; canary-last = %p \n" MAIN_STACK_INFO, stack->canary_first, stack->canary_last, MAIN_STACK_ARGS);
@@ -405,12 +447,21 @@ bool stack_verify(stack_t* stack) {
         return false;
     }
 #endif // CANARIES
-#ifdef HASHES
-    if (stack->hash != hash_djb2(stack)) {
-        log_error("Hash in struct = " PRIu64 " ; Real hash = " PRIu64 " \n", stack->hash, hash_djb2(stack));
+
+#ifdef DATA_HASHES
+    if (stack->data_hash != hash_djb2_data(stack)) {
+        log_error("data_hash = %" PRIu64 " ; Real data_hash = %" PRIu64 "\n" MAIN_STACK_INFO, stack->data_hash, hash_djb2_data(stack), MAIN_STACK_ARGS);
         return false;
     }
-#endif // HASHES
+#endif
+
+#ifdef STRUCT_HASHES
+    if (stack->struct_hash != hash_djb2_stack(stack)) {
+        log_error("struct_hash in struct = %" PRIu64 " ; Real struct_hash = %" PRIu64 " \n", stack->struct_hash, hash_djb2_stack(stack));
+        return false;
+    }
+#endif // STRUCT_HASHES
+
 #ifdef STACK_DEBUG
 
     if (stack->debug_data.file_name == NULL) {
@@ -466,6 +517,7 @@ bool stack_user_verify(stack_t* stack) {
 #ifdef VERIFIES
     return stack_verify(stack);
 #endif // VERIFIES
+
     return true;
 
 }

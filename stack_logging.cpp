@@ -29,7 +29,7 @@ void log_init(const char* filename) {
 
     assert(GLOBAL_LOG_FILE != NULL);
 
-    setbuf(GLOBAL_LOG_FILE, NULL); // for Abort-situation
+    setbuf(GLOBAL_LOG_FILE, NULL);
 
 }
 
