@@ -64,7 +64,7 @@ struct stack_debug_info {
 };
 
 
-struct stack_t { // TODO - DONE Struct canaries
+struct stack_t {
 
         #ifdef STRUCT_CANARIES
             type struct_canary_first;
@@ -383,7 +383,7 @@ uint64_t hash_djb2_data(stack_t* stack) {
 
 uint64_t hash_djb2_stack(stack_t* stack) {
 
-    uchar* stack_copy = (uchar*) stack; // TODO - DONE char -> uint - char do unsigned
+    uchar* stack_copy = (uchar*) stack;
     uint64_t struct_hash = 0;
 
     for (size_t index = 0; index < sizeof(stack_t) - sizeof(uint64_t) - sizeof(type); index++) {
@@ -405,7 +405,7 @@ void stack_dump(stack_t* stack) {
         log("\n\t  data[%5zu] = " SPECIFICATOR, index, (stack->data)[index]);
     }
     
-    for (ssize_t index = stack->size; index < stack->capacity; index++) { // TODO - DONE size can be <0; dur. compare ssize_t -> size_t; have to use 2xssize_t
+    for (ssize_t index = stack->size; index < stack->capacity; index++) {
         log("\n\t  data[%5zu] = " SPECIFICATOR, index, (stack->data)[index]);
 
         if (! identity((stack->data)[index], POIZON)) {
@@ -493,7 +493,6 @@ bool stack_verify(stack_t* stack) {
 #ifdef STRUCT_HASHES
     if (stack->struct_hash != hash_djb2_stack(stack)) {
         log_error_with_dump("struct_hash in struct = %" PRIu64 " ; Real struct_hash = %" PRIu64 " \n", stack->struct_hash, hash_djb2_stack(stack));
-        // TODO - DONE stack_dump() to macros
     }
 #endif // STRUCT_HASHES
 
