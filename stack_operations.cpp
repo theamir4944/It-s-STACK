@@ -19,11 +19,13 @@
 
 
 typedef double type;
+typedef unsigned char uchar;
 const type POIZON = NAN;
 const type CANARY_VAL = 0xB333DEDDEDAEBALL;
 const size_t MIN_POP_CAP = 2;
 
 #define CANARIES
+#define STRUCT_CANARIES
 #define STRUCT_HASHES
 #define DATA_HASHES
 #define VERIFIES
@@ -32,7 +34,11 @@ const size_t MIN_POP_CAP = 2;
 #define MAIN_STACK_INFO " \t  File: %s \n \t  Function: %s \n \t  Line: %d \n \t "
 #define MAIN_STACK_ARGS __FILE__, __PRETTY_FUNCTION__, __LINE__
 
-#define identity(a, b) (isnan(a) && isnan(b)) || (a == b)
+#define identity(a, b) ((isnan(a) && isnan(b)) || (a == b))
+#define false_dumping(stack) stack_dump(stack); return false
+#define log_error_with_dump(pattern, ...) log("\n\n[ERROR] - " pattern, ##__VA_ARGS__);\
+                                          stack_dump(stack);\
+                                          return false;
 
 #ifdef STACK_DEBUG
 #define ON_DBG(...) __VA_ARGS__
@@ -58,24 +64,35 @@ struct stack_debug_info {
 };
 
 
-struct stack_t {
-    ON_DBG(
-        stack_debug_info debug_data;
-    )
-    type* real_buffer;
-    type* data;
-    ssize_t size;
-    ssize_t capacity;
-#ifdef CANARIES
-    type* canary_first;
-    type* canary_last;
-#endif // CANARIES
-#ifdef DATA_HASHES
-    uint64_t data_hash;
-#endif // DATA_HASHES
-#ifdef STRUCT_HASHES
-    uint64_t struct_hash;
-#endif // STRUCT_HASHES
+struct stack_t { // TODO - DONE Struct canaries
+
+        #ifdef STRUCT_CANARIES
+            type struct_canary_first;
+        #endif // STRUCT_CANARIES
+
+    ON_DBG (stack_debug_info debug_data;)
+
+            type* real_buffer;
+            type* data;
+            ssize_t size;
+            ssize_t capacity;
+    
+        #ifdef CANARIES
+            type* canary_first;
+            type* canary_last;
+        #endif // CANARIES
+
+        #ifdef DATA_HASHES
+            uint64_t data_hash;
+        #endif // DATA_HASHES
+        
+        #ifdef STRUCT_HASHES
+            uint64_t struct_hash;
+        #endif // STRUCT_HASHES
+
+        #ifdef STRUCT_CANARIES
+            type struct_canary_last;
+        #endif // STRUCT_CANARIES
 };
 
 
@@ -105,6 +122,11 @@ void struct_null(stack_t* stack) {
     stack->canary_first = NULL;
     stack->canary_last = NULL;
 #endif // CANARIES
+
+#ifdef STRUCT_CANARIES
+    stack->struct_canary_first = 0;
+    stack->struct_canary_last = 0;
+#endif // STRUCT_CANARIES
 
 #ifdef DATA_HASHES
     stack->data_hash = hash_djb2_data(stack);
@@ -159,6 +181,11 @@ stack_error stack_constructor(stack_t* stack, ssize_t capacity ON_DBG(, char* st
         stack->canary_last = stack->real_buffer + stack->capacity + 1;
         *(stack->canary_last) = CANARY_VAL;
 #endif // CANARIES
+
+#ifdef STRUCT_CANARIES
+    stack->struct_canary_first = CANARY_VAL;
+    stack->struct_canary_last = CANARY_VAL;
+#endif // STRUCT_CANARIES
 
         for (ssize_t index = stack->size; index < capacity; index++) {
             (stack->data)[index] = POIZON;
@@ -243,8 +270,12 @@ stack_error stack_push(stack_t* stack, type new_value) {
     (stack->size)++;
 
     log_ok("Stack %p pushing done ; stack-data: %p ; size: %zd ; capacity: %zd \n" MAIN_STACK_INFO, stack, stack->data, stack->size, stack->capacity, MAIN_STACK_ARGS);
+#ifdef DATA_HASHES
     stack->data_hash = hash_djb2_data(stack);
+#endif // DATA_HASHES
+#ifdef STRUCT_HASHES
     stack->struct_hash = hash_djb2_stack(stack);
+#endif // STRUCT_HASHES
     return STACK_OK;
 
 }
@@ -302,8 +333,12 @@ stack_error stack_pop(stack_t* stack, type* output_value) {
     }
 
     log_ok("Stack %p popping done ; stack-data: %p ; size: %zd ; capacity: %zd \n" MAIN_STACK_INFO, stack, stack->data, stack->size, stack->capacity, MAIN_STACK_ARGS);
+#ifdef DATA_HASHES
     stack->data_hash = hash_djb2_data(stack);
+#endif // DATA_HASHES
+#ifdef STRUCT_HASHES
     stack->struct_hash = hash_djb2_stack(stack);
+#endif // STRUCT_HASHES
     return is_error;
 
 }
@@ -334,7 +369,7 @@ stack_error stack_destructor(stack_t* stack) {
 
 uint64_t hash_djb2_data(stack_t* stack) {
 
-    char* data_copy = (char*) (stack->data);
+    uchar* data_copy = (uchar*) (stack->data);
     uint64_t data_hash = 0;
 
     for (size_t index = 0; index < stack->size * sizeof(type); index++) {
@@ -348,10 +383,10 @@ uint64_t hash_djb2_data(stack_t* stack) {
 
 uint64_t hash_djb2_stack(stack_t* stack) {
 
-    char* stack_copy = (char*) stack;
+    uchar* stack_copy = (uchar*) stack; // TODO - DONE char -> uint - char do unsigned
     uint64_t struct_hash = 0;
 
-    for (size_t index = 0; index < sizeof(stack_t) - sizeof(uint64_t); index++) {
+    for (size_t index = 0; index < sizeof(stack_t) - sizeof(uint64_t) - sizeof(type); index++) {
         struct_hash = ((struct_hash << 5) + struct_hash) + (uint64_t)(stack_copy[index]);
     }
 
@@ -366,11 +401,11 @@ void stack_dump(stack_t* stack) {
     log(" Main information:\n");
     log(" \t  Stack: %p ; Capacity: %zd ; Size: %zd ; Data = %p \n", stack, stack->capacity, stack->size, stack->data);
     
-    for (size_t index = 0; index < stack->size; index++) {
+    for (ssize_t index = 0; index < stack->size; index++) {
         log("\n\t  data[%5zu] = " SPECIFICATOR, index, (stack->data)[index]);
     }
     
-    for (size_t index = stack->size; index < stack->capacity; index++) {
+    for (ssize_t index = stack->size; index < stack->capacity; index++) { // TODO - DONE size can be <0; dur. compare ssize_t -> size_t; have to use 2xssize_t
         log("\n\t  data[%5zu] = " SPECIFICATOR, index, (stack->data)[index]);
 
         if (! identity((stack->data)[index], POIZON)) {
@@ -422,71 +457,66 @@ bool stack_verify(stack_t* stack) {
     }
 
     if (stack->size < 0) {
-        log_error("Size = %zd \n" MAIN_STACK_INFO, stack->size, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Size = %zd \n" MAIN_STACK_INFO, stack->size, MAIN_STACK_ARGS);
     }
 
     if (stack->size > stack->capacity) {
-        log_error("Capacity = %zd < Size = %zd \n" MAIN_STACK_INFO, stack->capacity, stack->size, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Capacity = %zd < Size = %zd \n" MAIN_STACK_INFO, stack->capacity, stack->size, MAIN_STACK_ARGS);
     }
 
 #ifdef CANARIES
     if (stack->canary_first == NULL || stack->canary_last == NULL) {
-        log_error("Canary-first = %p ; canary-last = %p \n" MAIN_STACK_INFO, stack->canary_first, stack->canary_last, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Canary-first = %p ; canary-last = %p \n" MAIN_STACK_INFO, stack->canary_first, stack->canary_last, MAIN_STACK_ARGS);
     }
 
     if (*(stack->canary_first) != CANARY_VAL || *(stack->canary_last) != CANARY_VAL) {
-        log_error("Canary-value = " SPECIFICATOR " ; Canary-first = " SPECIFICATOR " ; Canary-last = " SPECIFICATOR "\n" MAIN_STACK_INFO, CANARY_VAL, *(stack->canary_first), *(stack->canary_last), MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Canary-value = " SPECIFICATOR " ; Canary-first = " SPECIFICATOR " ; Canary-last = " SPECIFICATOR "\n" MAIN_STACK_INFO, CANARY_VAL, *(stack->canary_first), *(stack->canary_last), MAIN_STACK_ARGS);
     }
 
     if (stack->canary_first != stack->real_buffer || stack->canary_last != stack->real_buffer + stack->capacity + 1) {
-        log_error("Canary was removed ; Canary-first = %p ; Canary-last = %p ; stack-buffer = %p ; stack-end-buffer = %p \n" MAIN_STACK_INFO, stack->canary_first, stack->canary_last, stack->real_buffer, stack->real_buffer + stack->capacity + 1, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Canary was removed ; Canary-first = %p ; Canary-last = %p ; stack-buffer = %p ; stack-end-buffer = %p \n" MAIN_STACK_INFO, stack->canary_first, stack->canary_last, stack->real_buffer, stack->real_buffer + stack->capacity + 1, MAIN_STACK_ARGS);
     }
 #endif // CANARIES
 
+#ifdef STRUCT_CANARIES
+    if (stack->struct_canary_first != CANARY_VAL || stack->struct_canary_last != CANARY_VAL) {
+        log_error_with_dump("Struct-canary was removed ; Struct-canary-first = " SPECIFICATOR " ; Struct-canary-last = " SPECIFICATOR " ; stack-buffer = %p ; stack-end-buffer = %p \n" MAIN_STACK_INFO, stack->struct_canary_first, stack->struct_canary_last, stack->real_buffer, stack->real_buffer + stack->capacity + 1, MAIN_STACK_ARGS);
+    }
+#endif // STRUCT_CANARIES
+
 #ifdef DATA_HASHES
     if (stack->data_hash != hash_djb2_data(stack)) {
-        log_error("data_hash = %" PRIu64 " ; Real data_hash = %" PRIu64 "\n" MAIN_STACK_INFO, stack->data_hash, hash_djb2_data(stack), MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("data_hash = %" PRIu64 " ; Real data_hash = %" PRIu64 "\n" MAIN_STACK_INFO, stack->data_hash, hash_djb2_data(stack), MAIN_STACK_ARGS);
     }
 #endif
 
 #ifdef STRUCT_HASHES
     if (stack->struct_hash != hash_djb2_stack(stack)) {
-        log_error("struct_hash in struct = %" PRIu64 " ; Real struct_hash = %" PRIu64 " \n", stack->struct_hash, hash_djb2_stack(stack));
-        return false;
+        log_error_with_dump("struct_hash in struct = %" PRIu64 " ; Real struct_hash = %" PRIu64 " \n", stack->struct_hash, hash_djb2_stack(stack));
+        // TODO - DONE stack_dump() to macros
     }
 #endif // STRUCT_HASHES
 
 #ifdef STACK_DEBUG
 
     if (stack->debug_data.file_name == NULL) {
-        log_error("FILE NAME = %p \n" MAIN_STACK_INFO, stack->debug_data.file_name, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("FILE NAME = %p \n" MAIN_STACK_INFO, stack->debug_data.file_name, MAIN_STACK_ARGS);
     }
 
     if (*(stack->debug_data.file_name) == '\0') {
-        log_error("Wrong file name \n" MAIN_STACK_INFO, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Wrong file name \n" MAIN_STACK_INFO, MAIN_STACK_ARGS);
     }
 
     if (stack->debug_data.stack_name == NULL) {
-        log_error("STACK NAME = %p \n" MAIN_STACK_INFO, stack->debug_data.stack_name, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("STACK NAME = %p \n" MAIN_STACK_INFO, stack->debug_data.stack_name, MAIN_STACK_ARGS);
     }
 
     if (*(stack->debug_data.stack_name) == '\0') {
-        log_error("Wrong stack name \n" MAIN_STACK_INFO, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("Wrong stack name \n" MAIN_STACK_INFO, MAIN_STACK_ARGS);
     }
 
     if (stack->debug_data.init_line <= 0) {
-        log_error("INIT LINE = %zd \n" MAIN_STACK_INFO, stack->debug_data.init_line, MAIN_STACK_ARGS);
-        return false;
+        log_error_with_dump("INIT LINE = %zd \n" MAIN_STACK_INFO, stack->debug_data.init_line, MAIN_STACK_ARGS);
     }
 
 #endif
@@ -500,11 +530,11 @@ bool stack_verify(stack_t* stack) {
 void stack_print(stack_t* stack) {
 
     printf("Stack:\n");
-    for (size_t index = 0; index < stack->size; index++) {
+    for (ssize_t index = 0; index < stack->size; index++) {
         printf("[%*zu]\t", 5, index);
     }
     printf("\n");
-    for (size_t index = 0; index < stack->size; index++) {
+    for (ssize_t index = 0; index < stack->size; index++) {
         printf(" " SPECIFICATOR " \t", (stack->data)[index]);
     }
     printf("\n\n");
